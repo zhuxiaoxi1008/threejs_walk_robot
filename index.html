@@ -2,12 +2,29 @@
 <html>
 <head>
     <meta charset="utf-8">
-    <title>Three.js - WASD 标准操作 (终极完美版)</title>
+    <title>Three.js - 机器人动作大师版</title>
     <style>
-        body { margin: 0; overflow: hidden; background-color: #d4f8c6; }
+        body { margin: 0; overflow: hidden; background-color: #d4f8c6; font-family: sans-serif;}
         canvas { display: block; }
-        #debug { position: absolute; top: 10px; left: 10px; color: #00ff00; font-family: monospace; z-index: 100; background: rgba(0,0,0,0.8); padding: 10px; border: 1px solid #00ff00; }
-        #hint { position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%); color: #fff; font-family: sans-serif; font-size: 16px; background: rgba(0,0,0,0.6); padding: 10px 20px; border-radius: 8px; pointer-events: none; }
+        
+        /* 左上角监控面板 */
+        #debug { position: absolute; top: 10px; left: 10px; color: #00ff00; font-family: monospace; z-index: 100; background: rgba(0,0,0,0.8); padding: 10px; border: 1px solid #00ff00; border-radius: 6px;}
+        
+        /* 底部按键提示面板 */
+        #controls-ui {
+            position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%);
+            background: rgba(0, 0, 0, 0.7); padding: 15px 30px; border-radius: 12px;
+            color: #fff; z-index: 100; display: flex; gap: 20px; flex-wrap: wrap; justify-content: center;
+            backdrop-filter: blur(5px); border: 1px solid rgba(255,255,255,0.2);
+        }
+        .key-group { display: flex; flex-direction: column; align-items: center; gap: 5px; }
+        .key { 
+            background: #333; border: 1px solid #555; border-bottom: 3px solid #111; 
+            padding: 4px 10px; border-radius: 4px; font-family: monospace; font-weight: bold; font-size: 14px;
+            color: #00f0ff;
+        }
+        .key.wide { padding: 4px 30px; }
+        .desc { font-size: 12px; color: #ccc; }
     </style>
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.min.js"></script>
@@ -15,13 +32,27 @@
 </head>
 <body>
     <div id="debug">正在初始化...</div>
-    <div id="hint">W: 前进 | S: 后退 | A: 左转 | D: 右转</div>
+    
+    <!-- 按键提示 UI -->
+    <div id="controls-ui">
+        <div class="key-group"><span class="key">W</span><span class="desc">前进</span></div>
+        <div class="key-group"><span class="key">S</span><span class="desc">后退</span></div>
+        <div class="key-group"><span class="key">A</span><span class="desc">左转</span></div>
+        <div class="key-group"><span class="key">D</span><span class="desc">右转</span></div>
+        <div style="width: 1px; background: #555; margin: 0 10px;"></div>
+        <div class="key-group"><span class="key wide">空格</span><span class="desc">跳跃 (Jump)</span></div>
+        <div class="key-group"><span class="key">1</span><span class="desc">跳舞 (Dance)</span></div>
+        <div class="key-group"><span class="key">2</span><span class="desc">挥手 (Wave)</span></div>
+        <div class="key-group"><span class="key">3</span><span class="desc">出拳 (Punch)</span></div>
+        <div class="key-group"><span class="key">4</span><span class="desc">点赞 (ThumbsUp)</span></div>
+        <div class="key-group"><span class="key">5</span><span class="desc">坐下 (Sitting)</span></div>
+        <div class="key-group"><span class="key">6</span><span class="desc">倒下 (Death)</span></div>
+    </div>
     
     <script>
         var scene = new THREE.Scene();
-        // 配合浅绿色背景，改成展厅模式
         scene.background = new THREE.Color(0xd4f8c6); 
-        scene.fog = new THREE.Fog(0xd4f8c6, 15, 50);
+        scene.fog = new THREE.Fog(0xd4f8c6, 20, 60);
 
         const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
         camera.position.set(8, 5, 8); 
@@ -33,7 +64,7 @@
 
         var controls = new THREE.OrbitControls(camera, renderer.domElement);
         controls.enableDamping = true;
-        controls.target.set(0, 0, 0);
+        controls.target.set(0, 1, 0);
 
         // 灯光
         var ambientLight = new THREE.AmbientLight(0xffffff, 0.8); 
@@ -56,6 +87,15 @@
         window.addEventListener('keydown', (e) => {
             const key = e.key.toLowerCase();
             if (['w', 'a', 's', 'd'].includes(key)) keys[key] = true;
+            
+            // 触发特殊动作按键
+            if (e.code === 'Space') triggerSpecialAction('Jump');
+            if (key === '1') triggerSpecialAction('Dance');
+            if (key === '2') triggerSpecialAction('Wave');
+            if (key === '3') triggerSpecialAction('Punch');
+            if (key === '4') triggerSpecialAction('ThumbsUp');
+            if (key === '5') triggerSpecialAction('Sitting');
+            if (key === '6') triggerSpecialAction('Death');
         });
         
         window.addEventListener('keyup', (e) => {
@@ -64,122 +104,150 @@
         });
 
         // ==========================================
-        // 加载模型
+        // 🎬 动画系统初始化
         // ==========================================
         var loader = new THREE.GLTFLoader();
         
         let robotModel = null;
-        let upperLegL, lowerLegL;
-        let upperLegR, lowerLegR;
-
+        let mixer = null;        
+        const actions = {};       // 存储所有动画动作
+        let activeAction = null;  // 当前正在播放的动作
+        
         let currentSpeed = 0;       
-        const maxSpeed = 3.0;       // 移动速度
-        const rotateSpeed = 2.5;    // 旋转速度
+        const maxSpeed = 3.0;       
+        const rotateSpeed = 2.5;    
         let isWalking = false;      
+
+        // 平滑切换动画的函数
+        function fadeToAction(name, duration = 0.2, loopOnce = false) {
+            if (!actions[name]) return;
+            
+            const nextAction = actions[name];
+            if (nextAction === activeAction) return; // 如果已经在播放，跳过
+            
+            const prevAction = activeAction;
+            activeAction = nextAction;
+            
+            if (prevAction) {
+                prevAction.fadeOut(duration);
+            }
+            
+            // 重置并播放新动作
+            activeAction.reset();
+            
+            if (loopOnce) {
+                // 播放一次就停止（用于跳跃、挥手等）
+                activeAction.setLoop(THREE.LoopOnce);
+                activeAction.clampWhenFinished = true; 
+            } else {
+                // 循环播放（用于站立、走路）
+                activeAction.setLoop(THREE.LoopRepeat);
+            }
+            
+            activeAction.fadeIn(duration).play();
+        }
+
+        // 触发一次性动作（例如按下数字键）
+        function triggerSpecialAction(name) {
+            if (!actions[name]) return;
+            // 播放一次，完成后自动回到站立
+            fadeToAction(name, 0.2, true);
+        }
 
         loader.load("robot.glb", function (gltf) {
             const model = gltf.scene;
             robotModel = model;
             scene.add(model);
 
-            // 初始位置
             model.position.set(0, -1, 0);
-
-            // 模型正面朝 +Z
             model.rotation.y = 0; 
 
-            upperLegL = model.getObjectByName('UpperLegL');
-            lowerLegL = model.getObjectByName('LowerLegL');
-            const footL = model.getObjectByName('FootL');
-            
-            upperLegR = model.getObjectByName('UpperLegR');
-            lowerLegR = model.getObjectByName('LowerLegR');
-            const footR = model.getObjectByName('FootR');
+            // 1. 初始化混合器
+            mixer = new THREE.AnimationMixer(model);
 
-            if (footL && lowerLegL) lowerLegL.attach(footL); 
-            if (footR && lowerLegR) lowerLegR.attach(footR);
+            // 2. 把 14 个动画全部解析出来，存到 actions 字典里
+            gltf.animations.forEach((clip) => {
+                actions[clip.name] = mixer.clipAction(clip);
+            });
 
-            window.initRotU = upperLegL.rotation.clone();
-            window.initRotL = lowerLegL.rotation.clone();
+            // 3. 默认播放站立 (Idle)
+            if (actions['Idle']) {
+                activeAction = actions['Idle'];
+                activeAction.play();
+            }
+
+            // 4. 【核心】监听动画结束事件
+            // 当 "一次性动画"（比如跳跃、挥手、死亡）播放完毕后，自动切回站立状态
+            mixer.addEventListener('finished', (e) => {
+                fadeToAction('Idle', 0.3);
+            });
         });
 
         // ==========================================
         // 动画循环
         // ==========================================
         const clock = new THREE.Clock();
-        let myTime = 0; 
         const debugPanel = document.getElementById('debug');
 
         function animate() {
             requestAnimationFrame(animate);
             const delta = clock.getDelta();
             
-            if (robotModel && upperLegL && upperLegR) {
+            if (robotModel && mixer) {
                 
-                // 1. 转向逻辑（A/D 对调修复）
-                if (keys.a) {
-                    robotModel.rotation.y += rotateSpeed * delta; // 左转
-                }
-                if (keys.d) {
-                    robotModel.rotation.y -= rotateSpeed * delta; // 右转
-                }
+                // 1. 转向逻辑
+                if (keys.a) robotModel.rotation.y += rotateSpeed * delta;
+                if (keys.d) robotModel.rotation.y -= rotateSpeed * delta;
 
-                // 2. 前后移动逻辑（W/S）
+                // 2. 前后移动逻辑
                 let targetSpeed = 0;
                 if (keys.w) targetSpeed = maxSpeed;
                 if (keys.s) targetSpeed = -maxSpeed;
                 
-                // 平滑加速/减速
                 currentSpeed = THREE.MathUtils.lerp(currentSpeed, targetSpeed, 10 * delta);
 
-                // 根据旋转角度，计算 X 和 Z 轴的速度分量
                 const moveX = Math.sin(robotModel.rotation.y) * currentSpeed * delta;
                 const moveZ = Math.cos(robotModel.rotation.y) * currentSpeed * delta;
-                
-                // 位移
                 robotModel.position.x += moveX;
                 robotModel.position.z += moveZ;
 
-                // 3. 走路状态判断
+                // 3. 状态判断与动画切换 (WASD 优先级最高)
                 isWalking = Math.abs(currentSpeed) > 0.1;
-
-                // 4. 骨骼动画
+                
                 if (isWalking) {
-                    myTime += delta * Math.abs(currentSpeed) * 1.5; 
-                    
-                    const swingSpeed = 5.0;     
-                    const swingAmp = 0.4;  
-                    const swingL = Math.sin(myTime * swingSpeed);
-                    const swingR = Math.sin(myTime * swingSpeed + Math.PI); 
-
-                    upperLegL.rotation.x = window.initRotU.x + (swingL * swingAmp); 
-                    upperLegR.rotation.x = window.initRotU.x + (swingR * swingAmp);
-
-                    if (lowerLegL && lowerLegR) {
-                        lowerLegL.rotation.x = window.initRotL.x + (Math.max(0, swingL) * 0.6); 
-                        lowerLegR.rotation.x = window.initRotL.x + (Math.max(0, swingR) * 0.6);
+                    // 如果按了 W/S，强制切换到走路
+                    if (activeAction !== actions['Walking']) {
+                        fadeToAction('Walking', 0.2);
+                    }
+                    // 根据速度调整走路频率
+                    if (actions['Walking']) {
+                        actions['Walking'].timeScale = Math.abs(currentSpeed) / maxSpeed;
                     }
                 } else {
-                    // 站立时，腿平滑放回
-                    upperLegL.rotation.x = THREE.MathUtils.lerp(upperLegL.rotation.x, window.initRotU.x, 10 * delta);
-                    upperLegR.rotation.x = THREE.MathUtils.lerp(upperLegR.rotation.x, window.initRotU.x, 10 * delta);
-                    
-                    if (lowerLegL && lowerLegR) {
-                        lowerLegL.rotation.x = THREE.MathUtils.lerp(lowerLegL.rotation.x, window.initRotL.x, 10 * delta);
-                        lowerLegR.rotation.x = THREE.MathUtils.lerp(lowerLegR.rotation.x, window.initRotL.x, 10 * delta);
+                    // 如果停下了，并且当前正在播放走路，切回 Idle
+                    // 注意：这里要判断是不是一次性动画结束了
+                    if (activeAction === actions['Walking']) {
+                        fadeToAction('Idle', 0.2);
                     }
                 }
 
-                // 5. 监控面板
+                // 4. 更新混合器
+                mixer.update(delta);
+
+                // 5. UI 监控面板
+                let currentAnimName = "None";
+                for (let name in actions) {
+                    if (actions[name] === activeAction) currentAnimName = name;
+                }
+                
                 debugPanel.innerHTML = `
-                    <b>【控制监控】</b><br>
+                    <b>【动画系统监控】</b><br>
+                    当前动作: <span style="color:#00f0ff; font-weight:bold;">${currentAnimName}</span><br>
                     坐标: X:${robotModel.position.x.toFixed(1)} Z:${robotModel.position.z.toFixed(1)}<br>
-                    当前速度: ${currentSpeed.toFixed(2)}<br>
-                    状态: ${isWalking ? '<span style="color:#0f0">行走中</span>' : '<span style="color:#aaa">站立</span>'}
                 `;
 
                 // 镜头平滑跟随
-                controls.target.lerp(robotModel.position, 5 * delta);
+                controls.target.lerp(robotModel.position.clone().add(new THREE.Vector3(0, 1, 0)), 5 * delta);
             }
 
             controls.update();
