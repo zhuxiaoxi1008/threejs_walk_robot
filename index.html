@@ -2,7 +2,7 @@
 <html>
 <head>
     <meta charset="utf-8">
-    <title>Three.js - 机器人动作大全 (终极完美版)</title>
+    <title>Three.js - 机器人动作大全 (带复位功能)</title>
     <style>
         body { margin: 0; overflow: hidden; background-color: #d4f8c6; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;}
         canvas { display: block; }
@@ -21,10 +21,9 @@
             color: #fff; z-index: 100; display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px;
             backdrop-filter: blur(8px); border: 1px solid rgba(255,255,255,0.1);
             box-shadow: 0 4px 15px rgba(0,0,0,0.3);
-            pointer-events: none; 
         }
         .key-item {
-            display: flex; align-items: center; gap: 8px; font-size: 12px;
+            display: flex; align-items: center; gap: 8px; font-size: 12px; pointer-events: none;
         }
         .key-item.full-width { grid-column: span 2; justify-content: center; margin-bottom: 4px;}
         .key { 
@@ -33,6 +32,29 @@
             color: #00f0ff; min-width: 20px; text-align: center;
         }
         .desc { color: #ccc; }
+        
+        /* 复位按钮专属样式 */
+        #reset-btn {
+            grid-column: span 2;
+            margin-bottom: 8px;
+            padding: 8px;
+            background: rgba(255, 60, 60, 0.2);
+            border: 1px solid rgba(255, 60, 60, 0.6);
+            color: #ff6b6b;
+            font-weight: bold;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: all 0.2s;
+            font-size: 13px;
+            pointer-events: auto; /* 恢复鼠标事件 */
+        }
+        #reset-btn:hover {
+            background: rgba(255, 60, 60, 0.4);
+            color: #fff;
+        }
+        #reset-btn:active {
+            transform: scale(0.98);
+        }
     </style>
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.min.js"></script>
@@ -43,6 +65,9 @@
     
     <!-- 右下角紧凑按键 UI -->
     <div id="controls-ui">
+        <!-- 复位按钮 -->
+        <button id="reset-btn">🔄 复位到起点 (Reset)</button>
+
         <div class="key-item full-width"><span class="desc" style="color:#0f0;">👇 移动 (W/A/S/D)</span></div>
         
         <div class="key-item"><span class="key">W</span><span class="desc">前进</span></div>
@@ -92,7 +117,7 @@
         dirLight.castShadow = true;
         scene.add(dirLight);
 
-        // 网格地面 (高度设定为 0)
+        // 网格地面
         const gridHelper = new THREE.GridHelper(200, 200, 0x333333, 0xaaaaaa);
         gridHelper.position.y = 0; 
         scene.add(gridHelper);
@@ -141,6 +166,7 @@
         const runSpeed = 4.5;       
         const rotateSpeed = 2.5;    
         let isMoving = false;      
+        let initialModelY = 0; // 记录模型贴地后的初始 Y 坐标
 
         function fadeToAction(name, duration = 0.2, loopOnce = false) {
             if (!actions[name]) return;
@@ -169,46 +195,65 @@
             fadeToAction(name, 0.2, true);
         }
 
+        // 复位函数
+        function resetRobot() {
+            if (!robotModel) return;
+
+            // 1. 清空按键状态（防止按着W键时点复位，复位后继续往前跑）
+            keys.w = false; keys.a = false; keys.s = false; keys.d = false; keys.shift = false;
+
+            // 2. 速度归零
+            currentSpeed = 0;
+
+            // 3. 位置和旋转归零
+            robotModel.position.set(0, initialModelY, 0);
+            robotModel.rotation.set(0, 0, 0);
+
+            // 4. 强制切回站立动画
+            fadeToAction('Idle', 0.2);
+
+            // 5. 相机焦点平滑拉回原点
+            controls.target.set(0, 1, 0);
+            camera.position.set(8, 5, 8);
+            
+            console.log("系统已复位！");
+        }
+
+        // 绑定按钮点击事件
+        document.getElementById('reset-btn').addEventListener('click', resetRobot);
+
         loader.load("robot.glb", function (gltf) {
             const model = gltf.scene;
             robotModel = model;
             scene.add(model);
 
-            // 模型初始朝向
             model.rotation.y = 0; 
 
-            // ==========================================
-            // 📐 核心修复：自动计算包围盒，让模型完美贴地 (y=0)
-            // ==========================================
-            const groundY = 0; // 网格地面的高度
+            // 自动计算包围盒贴地
+            const groundY = 0; 
             const box = new THREE.Box3().setFromObject(model);
             const modelBottomY = box.min.y;
             const offsetY = groundY - modelBottomY;
             
-            // 将模型整体抬高/降低，使脚底刚好踩在 y=0 的地面上
             model.position.y += offsetY; 
-            
-            // 水平位置归零
             model.position.x = 0;
             model.position.z = 0;
+            
+            // 保存贴地后的 Y 坐标，供复位使用
+            initialModelY = model.position.y;
 
-            // ==========================================
             // 初始化动画混合器
-            // ==========================================
             mixer = new THREE.AnimationMixer(model);
 
-            // 把所有动画存入字典
             gltf.animations.forEach((clip) => {
                 actions[clip.name] = mixer.clipAction(clip);
             });
 
-            // 默认站立
             if (actions['Idle']) {
                 activeAction = actions['Idle'];
                 activeAction.play();
             }
 
-            // 动作播完自动回到站立
             mixer.addEventListener('finished', () => {
                 if (keys.w || keys.s) {
                     fadeToAction(keys.shift ? 'Running' : 'Walking', 0.2);
@@ -234,10 +279,10 @@
                 if (keys.a) robotModel.rotation.y += rotateSpeed * delta;
                 if (keys.d) robotModel.rotation.y -= rotateSpeed * delta;
 
-                // 2. 移动与速度计算（结合 Shift 奔跑）
+                // 2. 移动与速度计算
                 let targetSpeed = 0;
                 if (keys.w) targetSpeed = keys.shift ? runSpeed : walkSpeed;
-                if (keys.s) targetSpeed = -walkSpeed; // 后退通常比前进慢
+                if (keys.s) targetSpeed = -walkSpeed; 
                 
                 currentSpeed = THREE.MathUtils.lerp(currentSpeed, targetSpeed, 10 * delta);
 
@@ -250,20 +295,16 @@
                 isMoving = Math.abs(currentSpeed) > 0.1;
                 
                 if (isMoving) {
-                    // 判断是走还是跑
                     const targetAnim = (keys.shift && currentSpeed > 0) ? 'Running' : 'Walking';
                     
-                    // 防止打断跳跃等一次性动作
                     if (activeAction !== actions[targetAnim] && activeAction !== actions['Jump'] && activeAction !== actions['WalkJump']) {
                         fadeToAction(targetAnim, 0.2);
                     }
                     
-                    // 匹配动画速度
                     if (actions[targetAnim]) {
                         actions[targetAnim].timeScale = Math.abs(currentSpeed) / (targetAnim === 'Running' ? runSpeed : walkSpeed);
                     }
                 } else {
-                    // 停下时，如果当前在走路/跑步，就切回站立
                     if (activeAction === actions['Walking'] || activeAction === actions['Running']) {
                         fadeToAction('Idle', 0.2);
                     }
@@ -281,6 +322,7 @@
                 debugPanel.innerHTML = `
                     <b>【状态监控】</b><br>
                     动作: <span style="color:#00f0ff;">${currentAnimName}</span><br>
+                    坐标: X:${robotModel.position.x.toFixed(1)} Z:${robotModel.position.z.toFixed(1)}<br>
                     速度: ${Math.abs(currentSpeed).toFixed(1)} m/s<br>
                 `;
 
