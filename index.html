@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Three.js - WASD 标准操作 (终极完美版)</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #d4f8c6; }
+        canvas { display: block; }
+        #debug { position: absolute; top: 10px; left: 10px; color: #00ff00; font-family: monospace; z-index: 100; background: rgba(0,0,0,0.8); padding: 10px; border: 1px solid #00ff00; }
+        #hint { position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%); color: #fff; font-family: sans-serif; font-size: 16px; background: rgba(0,0,0,0.6); padding: 10px 20px; border-radius: 8px; pointer-events: none; }
+    </style>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.min.js"></script>
+</head>
+<body>
+    <div id="debug">正在初始化...</div>
+    <div id="hint">W: 前进 | S: 后退 | A: 左转 | D: 右转</div>
+    
+    <script>
+        var scene = new THREE.Scene();
+        // 配合浅绿色背景，改成展厅模式
+        scene.background = new THREE.Color(0xd4f8c6); 
+        scene.fog = new THREE.Fog(0xd4f8c6, 15, 50);
+
+        const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
+        camera.position.set(8, 5, 8); 
+
+        var renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.shadowMap.enabled = true;
+        document.body.appendChild(renderer.domElement);
+
+        var controls = new THREE.OrbitControls(camera, renderer.domElement);
+        controls.enableDamping = true;
+        controls.target.set(0, 0, 0);
+
+        // 灯光
+        var ambientLight = new THREE.AmbientLight(0xffffff, 0.8); 
+        scene.add(ambientLight);
+        var dirLight = new THREE.DirectionalLight(0xffffff, 1.0);
+        dirLight.position.set(10, 20, 10);
+        dirLight.castShadow = true;
+        scene.add(dirLight);
+
+        // 网格地面
+        const gridHelper = new THREE.GridHelper(200, 200, 0x333333, 0xaaaaaa);
+        gridHelper.position.y = -1.5; 
+        scene.add(gridHelper);
+
+        // ==========================================
+        // ⌨️ 键盘监听
+        // ==========================================
+        const keys = { w: false, a: false, s: false, d: false };
+        
+        window.addEventListener('keydown', (e) => {
+            const key = e.key.toLowerCase();
+            if (['w', 'a', 's', 'd'].includes(key)) keys[key] = true;
+        });
+        
+        window.addEventListener('keyup', (e) => {
+            const key = e.key.toLowerCase();
+            if (['w', 'a', 's', 'd'].includes(key)) keys[key] = false;
+        });
+
+        // ==========================================
+        // 加载模型
+        // ==========================================
+        var loader = new THREE.GLTFLoader();
+        
+        let robotModel = null;
+        let upperLegL, lowerLegL;
+        let upperLegR, lowerLegR;
+
+        let currentSpeed = 0;       
+        const maxSpeed = 3.0;       // 移动速度
+        const rotateSpeed = 2.5;    // 旋转速度
+        let isWalking = false;      
+
+        loader.load("robot.glb", function (gltf) {
+            const model = gltf.scene;
+            robotModel = model;
+            scene.add(model);
+
+            // 初始位置
+            model.position.set(0, -1, 0);
+
+            // 模型正面朝 +Z
+            model.rotation.y = 0; 
+
+            upperLegL = model.getObjectByName('UpperLegL');
+            lowerLegL = model.getObjectByName('LowerLegL');
+            const footL = model.getObjectByName('FootL');
+            
+            upperLegR = model.getObjectByName('UpperLegR');
+            lowerLegR = model.getObjectByName('LowerLegR');
+            const footR = model.getObjectByName('FootR');
+
+            if (footL && lowerLegL) lowerLegL.attach(footL); 
+            if (footR && lowerLegR) lowerLegR.attach(footR);
+
+            window.initRotU = upperLegL.rotation.clone();
+            window.initRotL = lowerLegL.rotation.clone();
+        });
+
+        // ==========================================
+        // 动画循环
+        // ==========================================
+        const clock = new THREE.Clock();
+        let myTime = 0; 
+        const debugPanel = document.getElementById('debug');
+
+        function animate() {
+            requestAnimationFrame(animate);
+            const delta = clock.getDelta();
+            
+            if (robotModel && upperLegL && upperLegR) {
+                
+                // 1. 转向逻辑（A/D 对调修复）
+                if (keys.a) {
+                    robotModel.rotation.y += rotateSpeed * delta; // 左转
+                }
+                if (keys.d) {
+                    robotModel.rotation.y -= rotateSpeed * delta; // 右转
+                }
+
+                // 2. 前后移动逻辑（W/S）
+                let targetSpeed = 0;
+                if (keys.w) targetSpeed = maxSpeed;
+                if (keys.s) targetSpeed = -maxSpeed;
+                
+                // 平滑加速/减速
+                currentSpeed = THREE.MathUtils.lerp(currentSpeed, targetSpeed, 10 * delta);
+
+                // 根据旋转角度，计算 X 和 Z 轴的速度分量
+                const moveX = Math.sin(robotModel.rotation.y) * currentSpeed * delta;
+                const moveZ = Math.cos(robotModel.rotation.y) * currentSpeed * delta;
+                
+                // 位移
+                robotModel.position.x += moveX;
+                robotModel.position.z += moveZ;
+
+                // 3. 走路状态判断
+                isWalking = Math.abs(currentSpeed) > 0.1;
+
+                // 4. 骨骼动画
+                if (isWalking) {
+                    myTime += delta * Math.abs(currentSpeed) * 1.5; 
+                    
+                    const swingSpeed = 5.0;     
+                    const swingAmp = 0.4;  
+                    const swingL = Math.sin(myTime * swingSpeed);
+                    const swingR = Math.sin(myTime * swingSpeed + Math.PI); 
+
+                    upperLegL.rotation.x = window.initRotU.x + (swingL * swingAmp); 
+                    upperLegR.rotation.x = window.initRotU.x + (swingR * swingAmp);
+
+                    if (lowerLegL && lowerLegR) {
+                        lowerLegL.rotation.x = window.initRotL.x + (Math.max(0, swingL) * 0.6); 
+                        lowerLegR.rotation.x = window.initRotL.x + (Math.max(0, swingR) * 0.6);
+                    }
+                } else {
+                    // 站立时，腿平滑放回
+                    upperLegL.rotation.x = THREE.MathUtils.lerp(upperLegL.rotation.x, window.initRotU.x, 10 * delta);
+                    upperLegR.rotation.x = THREE.MathUtils.lerp(upperLegR.rotation.x, window.initRotU.x, 10 * delta);
+                    
+                    if (lowerLegL && lowerLegR) {
+                        lowerLegL.rotation.x = THREE.MathUtils.lerp(lowerLegL.rotation.x, window.initRotL.x, 10 * delta);
+                        lowerLegR.rotation.x = THREE.MathUtils.lerp(lowerLegR.rotation.x, window.initRotL.x, 10 * delta);
+                    }
+                }
+
+                // 5. 监控面板
+                debugPanel.innerHTML = `
+                    <b>【控制监控】</b><br>
+                    坐标: X:${robotModel.position.x.toFixed(1)} Z:${robotModel.position.z.toFixed(1)}<br>
+                    当前速度: ${currentSpeed.toFixed(2)}<br>
+                    状态: ${isWalking ? '<span style="color:#0f0">行走中</span>' : '<span style="color:#aaa">站立</span>'}
+                `;
+
+                // 镜头平滑跟随
+                controls.target.lerp(robotModel.position, 5 * delta);
+            }
+
+            controls.update();
+            renderer.render(scene, camera);
+        }
+        animate();
+
+        window.addEventListener("resize", function () {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+    </script>
+</body>
+</html>
